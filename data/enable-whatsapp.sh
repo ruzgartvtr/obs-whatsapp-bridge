@@ -13,16 +13,28 @@
 
 set -euo pipefail
 
+RAW_URL="https://raw.githubusercontent.com/ruzgartvtr/obs-whatsapp-bridge/main/scripts/enable-whatsapp.sh"
 WA="${1:-/Applications/WhatsApp.app}"
 
-if [[ ! -d "$WA" ]]; then
-  echo "WhatsApp bulunamadı: $WA" >&2
-  exit 1
+if [[ "$(id -u)" -ne 0 ]]; then
+  echo "Yönetici gerekli — macOS şifreniz sorulacak." >&2
+  SCRIPT_PATH="${BASH_SOURCE[0]:-}"
+  if [[ -n "$SCRIPT_PATH" && -f "$SCRIPT_PATH" ]]; then
+    exec sudo bash "$SCRIPT_PATH" "$@"
+  fi
+  # curl | bash: script dosya değil; içeriği yeniden çekip root olarak çalıştır
+  exec sudo bash -c "$(curl -fsSL "$RAW_URL")" bash "$@"
 fi
 
-if [[ "$(id -u)" -ne 0 ]]; then
-  echo "Yönetici gerekli — sudo ile çalıştırın." >&2
-  exec sudo "$0" "$@"
+if [[ ! -d "$WA" ]]; then
+  # Yaygın alternatif konum
+  if [[ -d "${HOME}/Applications/WhatsApp.app" ]]; then
+    WA="${HOME}/Applications/WhatsApp.app"
+  else
+    echo "WhatsApp bulunamadı: $WA" >&2
+    echo "WhatsApp’ı kurduktan sonra tekrar çalıştırın." >&2
+    exit 1
+  fi
 fi
 
 ENT="$(mktemp -t wa-ent)"
@@ -62,4 +74,4 @@ echo
 echo "Tamam. WhatsApp'ı Force Quit ile kapatıp yeniden açın."
 echo "Görüntülü aramada:"
 echo "  Kamera  → OBS Virtual Camera  (veya NDI Video)"
-echo "  Mikrofon → OBS Bridge Mic     (veya BlackHole 2ch)"
+echo "  Mikrofon → BlackHole 2ch     (veya OBS Bridge Mic)"
