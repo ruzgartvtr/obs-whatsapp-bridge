@@ -1,0 +1,31 @@
+name: Assemble OBSBridgeMic.c
+on:
+  push:
+    paths:
+      - 'mac/OBSBridgeMic/b64/**'
+      - '.github/workflows/assemble-c.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  assemble:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble from base64 parts
+        run: |
+          python3 <<'PY'
+          import base64, pathlib, glob
+          parts=sorted(glob.glob('mac/OBSBridgeMic/b64/*.b64'))
+          data=''.join(pathlib.Path(p).read_text().strip() for p in parts)
+          raw=base64.b64decode(data)
+          pathlib.Path('mac/OBSBridgeMic/OBSBridgeMic.c').write_bytes(raw)
+          print('wrote', len(raw), 'bytes')
+          PY
+      - name: Commit assembled source
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add mac/OBSBridgeMic/OBSBridgeMic.c
+          git diff --cached --quiet || git commit -m "Assemble OBSBridgeMic.c from base64 parts"
+          git push
