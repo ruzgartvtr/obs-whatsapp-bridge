@@ -52,16 +52,16 @@ local function preferred_score(name)
 	return 0
 end
 
--- Collect monitoring devices matching virtual-mic names
+-- Collect monitoring devices matching virtual-mic names.
+-- Lua binding requires (callback, data); callback is (data, name, id).
 local function find_virtual_mics()
 	local found = {}
-	local function cb(name, id)
+	local function cb(data, name, id)
 		if name_is_virtual_mic(name) then
-			table.insert(found, { name = name, id = id, score = preferred_score(name) })
+			table.insert(data, { name = name, id = id, score = preferred_score(name) })
 		end
 		return true
-	end
-	obs.obs_enum_audio_monitoring_devices(cb)
+	end	obs.obs_enum_audio_monitoring_devices(cb, found)
 	table.sort(found, function(a, b)
 		return a.score > b.score
 	end)
@@ -94,8 +94,7 @@ local function set_all_sources_monitoring(enable)
 				obs.obs_source_set_monitoring_type(source, obs.OBS_MONITORING_TYPE_NONE)
 			end
 		end
-	end
-	obs.source_list_release(sources)
+	end	obs.source_list_release(sources)
 end
 
 local function start_bridge(device_name, device_id)
@@ -156,7 +155,7 @@ function script_properties()
 
 	local mics = find_virtual_mics()
 	if #mics == 0 then
-		obs.obs_property_list_add_string(list, "(Sanal mikrofon yok — install.sh çalıştırın)", "")
+	obs.obs_property_list_add_string(list, "(Sanal mikrofon yok — install.sh çalıştırın)", "")
 	else
 		for _, m in ipairs(mics) do
 			-- value = "name\tid" so we can restore both
@@ -181,7 +180,7 @@ function script_properties()
 			local name, id = raw:match("([^\t]+)\t(.+)")
 			start_bridge(name, id)
 		end
-		obs.obs_data_release(settings)
+	obs.obs_data_release(settings)
 		return true
 	end)
 
