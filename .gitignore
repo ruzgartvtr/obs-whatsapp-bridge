@@ -1,0 +1,16 @@
+build/
+dist/
+agent-tools/
+
+.cmake/
+cmake-build-*/
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
+.DS_Store
+*.user
+*.o
+*.so
+*.dylib
+.idea/
+.vscode/
