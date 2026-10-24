@@ -10,9 +10,13 @@ local obs = obslua
 
 local OPT_DEVICE = "monitor_device"
 local OPT_AUTO = "auto_enable"
+local OPT_MONITOR_ONLY = "monitor_only"
+local OPT_SKIP_MIC_DESKTOP = "skip_mic_desktop"
 local bridge_on = false
 local selected_id = ""
 local selected_name = ""
+local use_monitor_only = true -- yankı önleme: varsayılan
+local skip_mic_desktop = true
 
 -- Known loopback devices (name + typical CoreAudio / driver UID)
 local KNOWN_MICS = {
@@ -201,21 +205,88 @@ local function source_has_audio(source)
 	return true
 end
 
+-- Sources that create feedback when monitored into BlackHole
+local function source_should_skip_monitoring(source)
+	local name = obs.obs_source_get_name(source) or ""
+	local id = obs.obs_source_get_id(source) or ""
+
+	-- Never monitor the virtual cable itself (OBS → BH → OBS loop)
+	if name_is_virtual_mic(name) then
+		return true
+	end
+	if string.find(string.lower(name), "blackhole", 1, true) then
+		return true
+	end
+
+	if not skip_mic_desktop then
+		return false
+	end
+
+	-- Desktop / mic global devices → classic echo into WhatsApp
+	local lower = string.lower(name)
+	if string.find(lower, "desktop audio", 1, true)
+		or string.find(lower, "masaüstü", 1, true)
+		or string.find(lower, "mic/aux", 1, true)
+		or string.find(lower, "mikrofon", 1, true)
+		or name == "Mic/Aux"
+		or name == "Desktop Audio"
+	then
+		return true
+	end
+
+	-- Audio input capture / WASAPI/coreaudio input of loopback
+	if id == "coreaudio_input_capture"
+		or id == "pulse_input_capture"
+		or id == "wasapi_input_capture"
+		or id == "alsa_input_capture"
+	then
+		-- Skip physical mics & any input named like loopback
+		return true
+	end
+
+	return false
+end
+
+local function monitoring_type_for_bridge()
+	-- Monitor Only: ses sadece BlackHole'a gider (WhatsApp), hoparlörde çift çalmaz
+	-- Monitor and Output: hem kayda/yayına hem BlackHole'a (yankı riski daha yüksek)
+	if use_monitor_only then
+		return obs.OBS_MONITORING_TYPE_MONITOR_ONLY
+	end
+	return obs.OBS_MONITORING_TYPE_MONITOR_AND_OUTPUT
+end
+
 local function set_all_sources_monitoring(enable)
 	local sources = obs.obs_enum_sources()
 	if sources == nil then
 		return
 	end
+	local mode = monitoring_type_for_bridge()
+	local enabled_n, skipped_n = 0, 0
 	for _, source in ipairs(sources) do
 		if source_has_audio(source) then
 			if enable then
-				obs.obs_source_set_monitoring_type(source, obs.OBS_MONITORING_TYPE_MONITOR_AND_OUTPUT)
+				if source_should_skip_monitoring(source) then
+					obs.obs_source_set_monitoring_type(source, obs.OBS_MONITORING_TYPE_NONE)
+					skipped_n = skipped_n + 1
+				else
+					obs.obs_source_set_monitoring_type(source, mode)
+					enabled_n = enabled_n + 1
+				end
 			else
 				obs.obs_source_set_monitoring_type(source, obs.OBS_MONITORING_TYPE_NONE)
 			end
 		end
 	end
 	obs.source_list_release(sources)
+	if enable then
+		log(string.format(
+			"monitoring: %d kaynak → %s, %d atlandı (yankı önleme)",
+			enabled_n,
+			use_monitor_only and "Monitor Only" or "Monitor and Output",
+			skipped_n
+		))
+	end
 end
 
 local function start_bridge(device_name, device_id)
@@ -238,19 +309,18 @@ local function start_bridge(device_name, device_id)
 
 	local ok = obs.obs_set_audio_monitoring_device(device_name, device_id)
 	if not ok then
-		-- Retry with name as id (some builds accept that)
 		ok = obs.obs_set_audio_monitoring_device(device_name, device_name)
 	end
 	if not ok then
 		log("Monitoring ayarlanamadı: " .. tostring(device_name) .. " / " .. tostring(device_id))
-		log("OBS → Settings → Audio → Advanced → Monitoring Device ile BlackHole seçip tekrar deneyin.")
+		log("OBS → Settings → Audio → Advanced → Monitoring Device = BlackHole 2ch")
 		return false
 	end
 	set_all_sources_monitoring(true)
 	bridge_on = true
 	selected_name = device_name
 	selected_id = device_id
-	log("Ses köprüsü AÇIK → " .. device_name)
+	log("Ses köprüsü AÇIK → " .. device_name .. " (yankı önleme açık)")
 	return true
 end
 
@@ -266,9 +336,9 @@ end
 
 function script_description()
 	return [[<h2>WhatsApp Bridge</h2>
-<p>OBS sahne sesini <b>BlackHole</b> / <b>OBS Bridge Mic</b> sanal mikrofonuna yollar.
-WhatsApp görüntülü aramada mikrofon olarak bu cihazı seçin; kamera olarak
-<b>OBS Virtual Camera</b> kullanın.</p>
+<p>OBS sahne sesini <b>BlackHole</b> sanal mikrofonuna yollar (WhatsApp mikrofonu).</p>
+<p><b>Yankı olursa:</b> kulaklık kullan; OBS’te Desktop Audio / Mic cihazı
+BlackHole olmasın; script’te “Yankıyı azalt” ve “Mic/Desktop atla” işaretli kalsın.</p>
 <p><a href="https://github.com/ruzgartvtr/obs-whatsapp-bridge">github.com/ruzgartvtr/obs-whatsapp-bridge</a></p>]]
 end
 
@@ -296,6 +366,16 @@ function script_properties()
 		obs.obs_property_list_add_string(list, m.name, m.name .. "\t" .. m.id)
 	end
 
+	obs.obs_properties_add_bool(
+		props,
+		OPT_MONITOR_ONLY,
+		"Yankıyı azalt (Monitor Only — önerilir)"
+	)
+	obs.obs_properties_add_bool(
+		props,
+		OPT_SKIP_MIC_DESKTOP,
+		"Mic / Desktop Audio’yu köprüleme (yankı önleme)"
+	)
 	obs.obs_properties_add_bool(props, OPT_AUTO, "OBS açılınca köprüyü otomatik aç")
 
 	obs.obs_properties_add_button(props, "btn_start", "Ses köprüsünü aç", function()
@@ -331,7 +411,8 @@ end
 
 function script_defaults(settings)
 	obs.obs_data_set_default_bool(settings, OPT_AUTO, false)
-	-- Default to BlackHole 2ch
+	obs.obs_data_set_default_bool(settings, OPT_MONITOR_ONLY, true)
+	obs.obs_data_set_default_bool(settings, OPT_SKIP_MIC_DESKTOP, true)
 	obs.obs_data_set_default_string(settings, OPT_DEVICE, "BlackHole 2ch\tBlackHole2ch_UID")
 end
 
@@ -344,7 +425,13 @@ function script_update(settings)
 			selected_id = id
 		end
 	end
-	if obs.obs_data_get_bool(settings, OPT_AUTO) and not bridge_on then
+	use_monitor_only = obs.obs_data_get_bool(settings, OPT_MONITOR_ONLY)
+	skip_mic_desktop = obs.obs_data_get_bool(settings, OPT_SKIP_MIC_DESKTOP)
+
+	-- Re-apply if bridge already on and options changed
+	if bridge_on then
+		set_all_sources_monitoring(true)
+	elseif obs.obs_data_get_bool(settings, OPT_AUTO) then
 		start_bridge(selected_name ~= "" and selected_name or nil, selected_id)
 	end
 end
